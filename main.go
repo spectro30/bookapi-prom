@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"log"
 	"net/http"
 	"strconv"
@@ -22,6 +24,26 @@ var admins = map[string]string{
 type Credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+var (
+	prom_version = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "version",
+		Help: "Version information about this binary",
+		ConstLabels: map[string]string{
+			"version": "v0.0.1",
+		},
+	})
+
+	prom_httpRequestTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "Count of all http requests",
+	}, []string{"method", "code"})
+)
+
+
+func promCounterInc (){
+	prom_httpRequestTotal.With(prometheus.Labels{"method": "Post", "code": strconv.Itoa(200)}).Inc()
 }
 
 
@@ -57,6 +79,7 @@ func Login(w http.ResponseWriter, r *http.Request){
 		Value: tokenString,
 		Expires: expiretime,
 	})
+	promCounterInc()
 }
 
 func Accesscheck(w http.ResponseWriter, r *http.Request) bool{
@@ -129,11 +152,14 @@ func Appendbooks () {
 }
 
 func Getallbooks(w http.ResponseWriter, r *http.Request){
+
 	w.Header().Set("Context-Type", "application/json")
 	json.NewEncoder(w).Encode(books)
+	promCounterInc()
 }
 
 func Getbookbyid(w http.ResponseWriter, r *http.Request){
+
 	w.Header().Set("Content-Type", "application/json")
 	params := mux.Vars(r)
 	for _, item := range books{
@@ -143,9 +169,11 @@ func Getbookbyid(w http.ResponseWriter, r *http.Request){
 		}
 	}
 	json.NewEncoder(w).Encode(&Book{})
+	promCounterInc()
 }
 
 func Getbookbyauthorid(w http.ResponseWriter, r *http.Request){
+
 	w.Header().Set("Content-Type", "application/json")
 	params := mux.Vars(r)
 	var bookbyauth []Book
@@ -155,9 +183,11 @@ func Getbookbyauthorid(w http.ResponseWriter, r *http.Request){
 		}
 	}
 	json.NewEncoder(w).Encode(bookbyauth)
+	promCounterInc()
 }
 
 func Getbookbygenre(w http.ResponseWriter, r *http.Request){
+
 	w.Header().Set("Content-Type", "application/json")
 	params := mux.Vars(r)
 	var bookbygen []Book
@@ -167,9 +197,11 @@ func Getbookbygenre(w http.ResponseWriter, r *http.Request){
 		}
 	}
 	json.NewEncoder(w).Encode(bookbygen)
+	promCounterInc()
 }
 
 func Addbook(w http.ResponseWriter, r *http.Request){
+
 	if !Accesscheck(w, r){
 		return
 	}
@@ -184,9 +216,11 @@ func Addbook(w http.ResponseWriter, r *http.Request){
 	books = append(books, book)
 
 	json.NewEncoder(w).Encode(book)
+	promCounterInc()
 }
 
 func Updatebook(w http.ResponseWriter, r *http.Request){
+
 	if !Accesscheck(w, r){
 		return
 	}
@@ -207,9 +241,11 @@ func Updatebook(w http.ResponseWriter, r *http.Request){
 			return
 		}
 	}
+	promCounterInc()
 }
 
 func Deletebook(w http.ResponseWriter, r *http.Request) {
+
 	if !Accesscheck(w, r){
 		return
 	}
@@ -225,12 +261,18 @@ func Deletebook(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(books)
 	intid, _ := strconv.ParseInt(params["id"], 10, 64)
 	unusedid = append(unusedid, int(intid))
+	promCounterInc()
 }
+
 
 
 func main(){
 	r := mux.NewRouter()
 	Appendbooks()
+
+	prom := prometheus.NewRegistry()
+	prom.MustRegister(prom_version)
+	prom.MustRegister(prom_httpRequestTotal)
 
 	r.HandleFunc("/login", Login)
 	r.HandleFunc("/books", Getallbooks).Methods("GET")
@@ -240,6 +282,7 @@ func main(){
 	r.HandleFunc("/books", Addbook).Methods("POST")
 	r.HandleFunc("/books/{id}", Updatebook).Methods("PUT")
 	r.HandleFunc("/books/{id}", Deletebook).Methods("DELETE")
+	r.Handle("/metrics", promhttp.HandlerFor(prom, promhttp.HandlerOpts{}))
 
 	log.Fatal(http.ListenAndServe(":8888", r))
 
